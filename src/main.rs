@@ -9,9 +9,16 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 fn format_mac_address(mac: &str) -> String {
-    mac.as_bytes()
-        .chunks(2)
-        .map(|chunk| format!("{:02X}", chunk[0]))
+    // 确保字符串长度是偶数
+    if mac.len() % 2 != 0 {
+        panic!("MAC address length must be even.");
+    }
+
+    // 将每两个字符转换成大写并用冒号分隔
+    (0..mac.len())
+        .step_by(2)
+        .map(|i| &mac[i..i + 2])
+        .map(|s| s.to_uppercase())
         .collect::<Vec<String>>()
         .join(":")
 }
@@ -49,6 +56,8 @@ fn parse_registry(reg_path: &str) -> Result<HashMap<String, String>, String> {
                     let key_name = key_node
                         .name()
                         .map_err(|e| format!("Error getting key name: {e}"))?;
+
+                    println!("bth name: {}", key_name);
 
                     // Print the names of the values of this node.
                     if let Some(value_iter) = key_node.values() {
@@ -148,12 +157,40 @@ fn write_file_with_sudo(file_path: &str, content: &str) -> io::Result<()> {
     child.wait()?;
     Ok(())
 }
+fn replace_long_term_key(content: &str, ltk: &str) -> String {
+    let mut in_long_term_key_section = false;
+    let mut updated_lines = Vec::new();
+    let ends_with_newline = content.ends_with('\n');
+
+    for line in content.lines() {
+        if line.trim() == "[LongTermKey]" {
+            in_long_term_key_section = true;
+            updated_lines.push(line.to_string());
+            continue;
+        }
+
+        if in_long_term_key_section && line.starts_with("Key=") {
+            updated_lines.push(format!("Key={}", ltk));
+        } else {
+            updated_lines.push(line.to_string());
+        }
+
+        if in_long_term_key_section && line.trim().is_empty() {
+            in_long_term_key_section = false;
+        }
+    }
+
+    let mut updated_content = updated_lines.join("\n");
+
+    if ends_with_newline && !updated_content.ends_with('\n') {
+        updated_content.push('\n');
+    }
+
+    updated_content
+}
 
 fn process_device(device_path: &str, ltk_map: &HashMap<String, String>) -> io::Result<()> {
-    let output = Command::new("sudo")
-        .arg("ls")
-        .arg(device_path)
-        .output()?;
+    let output = Command::new("sudo").arg("ls").arg(device_path).output()?;
 
     if !output.status.success() {
         eprintln!(
@@ -162,10 +199,10 @@ fn process_device(device_path: &str, ltk_map: &HashMap<String, String>) -> io::R
         );
         return Ok(());
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);    
+    let stdout = String::from_utf8_lossy(&output.stdout);
     let devices: Vec<&str> = stdout.trim().split('\n').collect();
 
-    let name_re = Regex::new(r"^Name=(.*)$").unwrap();
+    let name_re = Regex::new(r"(?m)^Name=(.*)$").unwrap();
     let key_re = Regex::new(r"^Key=.*$").unwrap();
 
     for device in devices {
@@ -173,25 +210,27 @@ fn process_device(device_path: &str, ltk_map: &HashMap<String, String>) -> io::R
             continue;
         }
 
-        println!(" device:{}", device); // 打印 stdout
-
         let info_file = format!("{}/{}/info", device_path, device);
         let content = read_file_with_sudo(&info_file)?;
 
         // println!(" content:{}", content); // 打印 stdout
 
         if let Some(caps) = name_re.captures(&content) {
-
-
             let name = caps.get(1).map_or("", |m| m.as_str());
 
             println!("Processing device: {}", device);
             println!("  Device Name: {}", name);
 
             for (mac, ltk) in ltk_map {
+                println!("  -{}-{}", device, mac);
                 if device.starts_with(&mac[..8]) {
-                    let updated_content = key_re.replace(&content, format!("Key={}", ltk));
+                    println!("  update ltk: {}", ltk);
+
+                    let updated_content = replace_long_term_key(&content, ltk);
+                    // let updated_content = key_re.replace(&content, format!("Key={}", ltk));
                     // write_file_with_sudo(&info_file, &updated_content)?;
+                    let updated = info_file + ".updated";
+                    write_file_with_sudo(&updated, &updated_content)?;
 
                     let new_device_name = mac.clone();
                     let new_device_path = format!("{}/{}", device_path, new_device_name);
