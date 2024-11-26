@@ -1,20 +1,17 @@
-use nt_hive::{Hive, KeyNode, KeyValueData, KeyValueDataType, Result};
+use nt_hive::{Hive, KeyValueData, KeyValueDataType, Result};
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
 use std::io::{self, Write};
-use std::io::{Error, ErrorKind};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-fn format_mac_address(mac: &str) -> String {
-    // 确保字符串长度是偶数
+fn fmt_mac(mac: &str) -> String {
     if mac.len() % 2 != 0 {
         panic!("MAC address length must be even.");
     }
 
-    // 将每两个字符转换成大写并用冒号分隔
     (0..mac.len())
         .step_by(2)
         .map(|i| &mac[i..i + 2])
@@ -23,81 +20,37 @@ fn format_mac_address(mac: &str) -> String {
         .join(":")
 }
 
-fn parse_registry(reg_path: &str) -> Result<HashMap<String, String>, String> {
-    // Read the hive file.
-    let filename = reg_path;
-    let mut f = File::open(filename).map_err(|e| format!("Error opening hive file: {e}"))?;
-    let mut buffer = Vec::<u8>::new();
-    f.read_to_end(&mut buffer)
-        .map_err(|e| format!("Error reading hive file: {e}"))?;
+fn parse_reg(path: &str) -> Result<HashMap<String, String>, String> {
+    let mut file = File::open(path).map_err(|e| format!("Open hive error: {e}"))?;
+    let mut buf = Vec::<u8>::new();
+    file.read_to_end(&mut buf).map_err(|e| format!("Read hive error: {e}"))?;
 
-    // Parse the hive.
-    let hive = Hive::new(buffer.as_ref()).map_err(|e| format!("Error parsing hive file: {e}"))?;
-    let root_key_node = hive.root_key_node().unwrap();
-    let key_node = root_key_node
-        .subpath(r"ControlSet001\Services\BTHPORT\Parameters\Keys")
-        .unwrap()
-        .unwrap();
+    let hive = Hive::new(buf.as_ref()).map_err(|e| format!("Parse hive error: {e}"))?;
+    let root = hive.root_key_node().unwrap();
+    let keys = root.subpath(r"ControlSet001\Services\BTHPORT\Parameters\Keys").unwrap().unwrap();
 
-    let mut result: HashMap<String, String> = HashMap::new(); // Explicitly initialize the result map with types
-
-    if let Some(subkeys) = key_node.subkeys() {
-        let subkeys = subkeys.map_err(|e| format!("Error getting subkeys: {e}"))?;
-
-        for bth_device_node in subkeys {
-            let bth_device_node =
-                bth_device_node.map_err(|e| format!("Error enumerating key: {e}"))?;
-
-            if let Some(subkeys) = bth_device_node.subkeys() {
-                let subkeys = subkeys.map_err(|e| format!("Error getting subkeys: {e}"))?;
-
-                for key_node in subkeys {
-                    let key_node = key_node.map_err(|e| format!("Error enumerating key: {e}"))?;
-                    let key_name = key_node
-                        .name()
-                        .map_err(|e| format!("Error getting key name: {e}"))?;
-
-                    println!("bth name: {}", key_name);
-
-                    // Print the names of the values of this node.
-                    if let Some(value_iter) = key_node.values() {
-                        let value_iter = value_iter
-                            .map_err(|e| format!("Error creating value iterator: {e}"))?;
-
-                        for value in value_iter {
-                            let value =
-                                value.map_err(|e| format!("Error enumerating value: {e}"))?;
-
-                            let value_name = value
-                                .name()
-                                .map_err(|e| format!("Error getting value name: {e}"))?
-                                .to_string_lossy();
-
-                            let value_type = value
-                                .data_type()
-                                .map_err(|e| format!("Error getting value type: {e}"))?;
-
-                            if value_name != "LTK" || value_type != KeyValueDataType::RegBinary {
-                                continue;
-                            }
-
-                            let binary_data = value
-                                .data()
-                                .map_err(|e| format!("Error getting binary data: {e}"))?;
-                            match binary_data {
+    let mut map = HashMap::new();
+    if let Some(subkeys) = keys.subkeys() {
+        for dev in subkeys.map_err(|e| format!("Get subkeys error: {e}"))? {
+            let dev = dev.map_err(|e| format!("Enumerate key error: {e}"))?;
+            if let Some(subs) = dev.subkeys() {
+                for key in subs.map_err(|e| format!("Get subkeys error: {e}"))? {
+                    let key = key.map_err(|e| format!("Enumerate key error: {e}"))?;
+                    let name = key.name().map_err(|e| format!("Get name error: {e}"))?;
+                    println!("BT name: {}", name);
+                    if let Some(vals) = key.values() {
+                        for val in vals.map_err(|e| format!("Create value iterator error: {e}"))? {
+                            let val = val.map_err(|e| format!("Enumerate value error: {e}"))?;
+                            let vname = val.name().map_err(|e| format!("Get name error: {e}"))?.to_string_lossy();
+                            let vtype = val.data_type().map_err(|e| format!("Get type error: {e}"))?;
+                            if vname != "LTK" || vtype != KeyValueDataType::RegBinary { continue; }
+                            match val.data().map_err(|e| format!("Get binary data error: {e}"))? {
                                 KeyValueData::Small(data) => {
-                                    // Convert binary data to hexadecimal string
-                                    let ltk_hex = data
-                                        .iter()
-                                        .map(|b| format!("{:02X}", b))
-                                        .collect::<Vec<_>>()
-                                        .join("");
-                                    // Insert the LTK into the result map
-
-                                    let formatted_mac = format_mac_address(&key_name.to_string());
-                                    result.insert(formatted_mac, ltk_hex); // Use clone() because btu_device_name is used multiple times
-                                }
-                                KeyValueData::Big(_iter) => println!("BIG DATA"),
+                                    let ltk = data.iter().map(|b| format!("{:02X}", b)).collect::<String>();
+                                    let mac = fmt_mac(&name.to_string());
+                                    map.insert(mac, ltk);
+                                },
+                                KeyValueData::Big(_) => println!("BIG DATA"),
                             }
                         }
                     }
@@ -105,144 +58,80 @@ fn parse_registry(reg_path: &str) -> Result<HashMap<String, String>, String> {
             }
         }
     }
-    Ok(result)
+    Ok(map)
 }
 
-fn get_device_directory_with_sudo() -> Option<String> {
-    let output = Command::new("sudo")
-        .arg("ls")
-        .arg("/var/lib/bluetooth/")
-        .output()
-        .ok()?;
+fn get_bt_dir() -> Option<String> {
+    let output = Command::new("sudo").arg("ls").arg("/var/lib/bluetooth/").output().ok()?;
     if !output.status.success() {
-        eprintln!(
-            "Error listing device directory: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        eprintln!("List dir error: {}", String::from_utf8_lossy(&output.stderr));
         return None;
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let dirs: Vec<&str> = stdout.trim().split('\n').collect();
-    if dirs.is_empty() {
-        eprintln!("No device directory found");
-        return None;
-    }
-    Some(dirs[0].to_string())
+    let binding = String::from_utf8_lossy(&output.stdout);
+    let dirs: Vec<&str> = binding.trim().split('\n').collect();
+    if dirs.is_empty() { eprintln!("No BT dir found"); None } else { Some(dirs[0].to_string()) }
 }
 
-fn read_file_with_sudo(file_path: &str) -> io::Result<String> {
-    let output = Command::new("sudo").arg("cat").arg(file_path).output()?;
+fn read_file(path: &str) -> io::Result<String> {
+    let output = Command::new("sudo").arg("cat").arg(path).output()?;
     if !output.status.success() {
-        eprintln!(
-            "Error reading file: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return Err(io::Error::new(io::ErrorKind::Other, "Failed to read file"));
+        eprintln!("Read file error: {}", String::from_utf8_lossy(&output.stderr));
+        Err(io::Error::new(io::ErrorKind::Other, "Failed to read"))
+    } else {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-fn write_file_with_sudo(file_path: &str, content: &str) -> io::Result<()> {
-    let mut child = Command::new("sudo")
-        .arg("tee")
-        .arg(file_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .spawn()?;
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(content.as_bytes())?;
+fn write_file(path: &str, content: &str) -> io::Result<()> {
+    let mut child = Command::new("sudo").arg("tee").arg(path).stdin(Stdio::piped()).stdout(Stdio::null()).spawn()?;
+    child.stdin.as_mut().unwrap().write_all(content.as_bytes())?;
     child.wait()?;
     Ok(())
 }
-fn replace_long_term_key(content: &str, ltk: &str) -> String {
-    let mut in_long_term_key_section = false;
-    let mut updated_lines = Vec::new();
-    let ends_with_newline = content.ends_with('\n');
 
-    for line in content.lines() {
-        if line.trim() == "[LongTermKey]" {
-            in_long_term_key_section = true;
-            updated_lines.push(line.to_string());
-            continue;
-        }
-
-        if in_long_term_key_section && line.starts_with("Key=") {
-            updated_lines.push(format!("Key={}", ltk));
-        } else {
-            updated_lines.push(line.to_string());
-        }
-
-        if in_long_term_key_section && line.trim().is_empty() {
-            in_long_term_key_section = false;
-        }
-    }
-
-    let mut updated_content = updated_lines.join("\n");
-
-    if ends_with_newline && !updated_content.ends_with('\n') {
-        updated_content.push('\n');
-    }
-
-    updated_content
+fn update_ltk(c: &str, ltk: &str) -> String {
+    let mut in_ltk = false;
+    let ends_nl = c.ends_with('\n');
+    let updated = c.lines().map(|l| {
+        if l.trim() == "[LongTermKey]" { in_ltk = true; l.to_string() }
+        else if in_ltk && l.starts_with("Key=") { format!("Key={}", ltk) }
+        else { l.to_string() }
+    }).collect::<Vec<_>>().join("\n");
+    if ends_nl && !updated.ends_with('\n') { updated + "\n" } else { updated }
 }
 
-fn process_device(device_path: &str, ltk_map: &HashMap<String, String>) -> io::Result<()> {
-    let output = Command::new("sudo").arg("ls").arg(device_path).output()?;
-
+fn proc_dev(path: &str, map: &HashMap<String, String>) -> io::Result<()> {
+    let output = Command::new("sudo").arg("ls").arg(path).output()?;
     if !output.status.success() {
-        eprintln!(
-            "Error listing device directory: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        eprintln!("List dir error: {}", String::from_utf8_lossy(&output.stderr));
         return Ok(());
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let devices: Vec<&str> = stdout.trim().split('\n').collect();
-
+    let binding = String::from_utf8_lossy(&output.stdout);
+    let devices: Vec<&str> = binding.trim().split('\n').collect();
     let name_re = Regex::new(r"(?m)^Name=(.*)$").unwrap();
-    let key_re = Regex::new(r"^Key=.*$").unwrap();
-
-    for device in devices {
-        if !device.contains(':') {
-            continue;
-        }
-
-        let info_file = format!("{}/{}/info", device_path, device);
-        let content = read_file_with_sudo(&info_file)?;
-
-        // println!(" content:{}", content); // 打印 stdout
-
+    for dev in devices {
+        if !dev.contains(':') { continue; }
+        let info_path = format!("{}/{}/info", path, dev);
+        let content = read_file(&info_path)?;
         if let Some(caps) = name_re.captures(&content) {
             let name = caps.get(1).map_or("", |m| m.as_str());
-
-            println!("Processing device: {}", device);
-            println!("  Device Name: {}", name);
-
-            for (mac, ltk) in ltk_map {
-                println!("  -{}-{}", device, mac);
-                if device.starts_with(&mac[..8]) {
-                    println!("  update ltk: {}", ltk);
-
-                    let updated_content = replace_long_term_key(&content, ltk);
-                    // let updated_content = key_re.replace(&content, format!("Key={}", ltk));
-                    // write_file_with_sudo(&info_file, &updated_content)?;
-                    let updated = info_file + ".updated";
-                    write_file_with_sudo(&updated, &updated_content)?;
-
-                    let new_device_name = mac.clone();
-                    let new_device_path = format!("{}/{}", device_path, new_device_name);
-                    if new_device_path != format!("{}/{}", device_path, device) {
-                        // Command::new("sudo")
-                        //     .arg("mv")
-                        //     .arg(format!("{}/{}", device_path, device))
-                        //     .arg(new_device_path)
-                        //     .output()?;
-                        println!("  Renamed directory from {} to {}", device, new_device_name);
+            println!("Proc device: {}, Name: {}", dev, name);
+            for (mac, ltk) in map {
+                if dev.starts_with(&mac[..8]) {
+                    println!("  Update LTK: {}", ltk);
+                    let new_content = update_ltk(&content, ltk);
+                    let updated_path = format!("{}.updated", info_path);
+                    write_file(&updated_path, &new_content)?;
+                    let new_name = mac.clone();
+                    let new_path = format!("{}/{}", path, new_name);
+                    if new_path != format!("{}/{}", path, dev) {
+                        Command::new("sudo")
+                            .arg("mv")
+                            .arg(format!("{}/{}", path, dev))
+                            .arg(new_path)
+                            .output()?;
+                        println!("  Renamed from {} to {}", dev, new_name);
                     }
-
                     break;
                 }
             }
@@ -251,60 +140,42 @@ fn process_device(device_path: &str, ltk_map: &HashMap<String, String>) -> io::R
     Ok(())
 }
 
-fn list_ntfs_mount_points() -> Vec<(String, String)> {
-    let output = Command::new("mount")
-        .output()
-        .expect("Failed to execute mount command");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout
-        .lines()
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() > 4 && ["ntfs", "ntfs3"].contains(&parts[4].to_lowercase().as_str()) {
-                Some((parts[0].to_string(), parts[2].to_string()))
-            } else {
-                None
-            }
-        })
-        .collect()
+fn list_ntfs_mounts() -> Vec<(String, String)> {
+    let output = Command::new("mount").output().expect("Mount cmd failed");
+    let binding = String::from_utf8_lossy(&output.stdout);
+    let lines = binding.lines();
+    lines.filter_map(|line| {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() > 4 && ["ntfs", "ntfs3"].contains(&parts[4].to_lowercase().as_str()) {
+            Some((parts[0].to_string(), parts[2].to_string()))
+        } else { None }
+    }).collect()
 }
 
 fn main() {
-    let ntfs_mounts = list_ntfs_mount_points();
-    if ntfs_mounts.is_empty() {
-        eprintln!("No NTFS mount points found.");
-        return;
-    }
+    let mounts = list_ntfs_mounts();
+    if mounts.is_empty() { eprintln!("No NTFS mounts found."); return; }
 
-    let mut content: HashMap<String, String> = HashMap::new(); // 初始化 content
-
-    for (device, mount_point) in ntfs_mounts {
-        let reg_path = format!("{}/Windows/System32/config/SYSTEM", mount_point);
+    let mut ltk_map = HashMap::new();
+    for (_device, mount) in mounts {
+        let reg_path = format!("{}/Windows/System32/config/SYSTEM", mount);
         if Path::new(&reg_path).exists() {
-            match parse_registry(&reg_path) {
-                Ok(parsed_content) => {
-                    if !parsed_content.is_empty() {
-                        println!("Parsed content:");
-                        for (mac, ltk) in &parsed_content {
-                            println!("{} = {}", mac, ltk);
-                        }
-                        content = parsed_content; // 将解析的内容赋值给 content
-                        break; // Only process the first found SYSTEM file
-                    } else {
-                        eprintln!("No content to display.");
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error parsing registry: {}", e);
-                }
+            match parse_reg(&reg_path) {
+                Ok(parsed) => {
+                    if !parsed.is_empty() {
+                        println!("Parsed LTK:");
+                        for (mac, ltk) in &parsed { println!("{} = {}", mac, ltk); }
+                        ltk_map = parsed; 
+                        break;
+                    } else { eprintln!("No LTK to show."); }
+                },
+                Err(e) => eprintln!("Parse reg error: {}", e),
             }
         }
     }
 
-    if let Some(device_dir) = get_device_directory_with_sudo() {
-        let device_path = format!("/var/lib/bluetooth/{}", device_dir);
-        if let Err(e) = process_device(&device_path, &content) {
-            eprintln!("Failed to process device: {}", e);
-        }
+    if let Some(bt_dir) = get_bt_dir() {
+        let bt_path = format!("/var/lib/bluetooth/{}", bt_dir);
+        if let Err(e) = proc_dev(&bt_path, &ltk_map) { eprintln!("Process device error: {}", e); }
     }
 }
