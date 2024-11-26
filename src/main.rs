@@ -38,20 +38,17 @@ fn parse_reg(path: &str) -> Result<HashMap<String, String>, String> {
                     let key = key.map_err(|e| format!("Enumerate key error: {e}"))?;
                     let name = key.name().map_err(|e| format!("Get name error: {e}"))?;
                     println!("BT name: {}", name);
-                    if let Some(vals) = key.values() {
-                        for val in vals.map_err(|e| format!("Create value iterator error: {e}"))? {
-                            let val = val.map_err(|e| format!("Enumerate value error: {e}"))?;
-                            let vname = val.name().map_err(|e| format!("Get name error: {e}"))?.to_string_lossy();
-                            let vtype = val.data_type().map_err(|e| format!("Get type error: {e}"))?;
-                            if vname != "LTK" || vtype != KeyValueDataType::RegBinary { continue; }
-                            match val.data().map_err(|e| format!("Get binary data error: {e}"))? {
-                                KeyValueData::Small(data) => {
-                                    let ltk = data.iter().map(|b| format!("{:02X}", b)).collect::<String>();
-                                    let mac = fmt_mac(&name.to_string());
-                                    map.insert(mac, ltk);
-                                },
-                                KeyValueData::Big(_) => println!("BIG DATA"),
-                            }
+                    if let Some(val) = key.value("LTK") {
+                        let val = val.unwrap();
+                        let vtype = val.data_type().map_err(|e| format!("Get type error: {e}"))?;
+                        if vtype != KeyValueDataType::RegBinary { continue; }
+                        match val.data().map_err(|e| format!("Get binary data error: {e}"))? {
+                            KeyValueData::Small(data) => {
+                                let ltk = data.iter().map(|b| format!("{:02X}", b)).collect::<String>();
+                                let mac = fmt_mac(&name.to_string());
+                                map.insert(mac, ltk);
+                            },
+                            KeyValueData::Big(_) => println!("BIG DATA"),
                         }
                     }
                 }
