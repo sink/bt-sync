@@ -3,7 +3,6 @@ use std::process;
 
 fn main() {
     if !is_root() {
-        eprintln!("This program must be run as root. Attempting to restart with sudo...");
         restart_with_sudo();
         return;
     }
@@ -37,14 +36,9 @@ fn restart_with_sudo() {
     let current_exe = env::current_exe().expect("Failed to get current executable path");
     let args: Vec<String> = env::args().collect();
 
-    let status = Command::new("sudo")
+    Command::new("sudo")
         .arg(current_exe)
         .args(&args[1..])
         .status()
         .expect("Failed to execute sudo");
-
-    if !status.success() {
-        eprintln!("Failed to restart with sudo. Please run the program manually with sudo.");
-        process::exit(1);
-    }
 }

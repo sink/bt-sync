@@ -1,12 +1,13 @@
 // src/lib.rs
 
-use nt_hive::{Hive, KeyValueData, KeyValueDataType, Result};
+use nt_hive::{Hive, KeyValueData, KeyValueDataType};
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::io::Read;
 use std::path::Path;
+use anyhow::{Context, Result as AnyResult};
 
 pub fn fmt_mac(mac: &str) -> String {
     (0..mac.len())
@@ -17,34 +18,34 @@ pub fn fmt_mac(mac: &str) -> String {
         .join(":")
 }
 
-pub fn parse_reg(path: &str) -> Result<HashMap<String, String>, String> {
-    let mut file = fs::File::open(path).map_err(|e| format!("Open hive error: {e}"))?;
+pub fn parse_reg(path: &str) -> AnyResult<HashMap<String, String>> {
+    let mut file = fs::File::open(path).context("Failed to open hive")?;
     let mut buf = Vec::<u8>::new();
-    file.read_to_end(&mut buf).map_err(|e| format!("Read hive error: {e}"))?;
+    file.read_to_end(&mut buf).context("Failed to read hive")?;
 
-    let hive = Hive::new(buf.as_ref()).map_err(|e| format!("Parse hive error: {e}"))?;
+    let hive = Hive::new(buf.as_ref()).context("Failed to parse hive")?;
     let root = hive.root_key_node().unwrap();
     let keys = root.subpath(r"ControlSet001\Services\BTHPORT\Parameters\Keys").unwrap().unwrap();
 
     let mut ltk_map = HashMap::new();
 
     if let Some(subkeys) = keys.subkeys() {
-        for dev in subkeys.map_err(|e| format!("Get subkeys error: {e}"))? {
-            let dev = dev.map_err(|e| format!("Enumerate key error: {e}"))?;
+        for dev in subkeys.context("Failed to get subkeys")? {
+            let dev = dev.context("Failed to enumerate key")?;
             if let Some(subs) = dev.subkeys() {
-                for key in subs.map_err(|e| format!("Get subkeys error: {e}"))? {
-                    let key = key.map_err(|e| format!("Enumerate key error: {e}"))?;
-                    let name = key.name().map_err(|e| format!("Get name error: {e}"))?;
+                for key in subs.context("Failed to get subkeys")? {
+                    let key = key.context("Failed to enumerate key")?;
+                    let name = key.name().context("Failed to get name")?;
                     println!("BT name: {}", name);
 
                     if let Some(val) = key.value("LTK") {
                         let val = val.unwrap();
-                        let vtype = val.data_type().map_err(|e| format!("Get type error: {e}"))?;
+                        let vtype = val.data_type().context("Failed to get type")?;
                         if vtype != KeyValueDataType::RegBinary {
                             continue;
                         }
 
-                        match val.data().map_err(|e| format!("Get binary data error: {e}"))? {
+                        match val.data().context("Failed to get binary data")? {
                             KeyValueData::Small(data) => {
                                 let ltk = data.iter().map(|b| format!("{:02X}", b)).collect::<String>();
                                 let mac = fmt_mac(&name.to_string());
@@ -81,7 +82,7 @@ pub fn update_ltk(c: &str, ltk: &str) -> String {
     }
 }
 
-fn process_single_device(bt_path: &str, map: &HashMap<String, String>) -> io::Result<()> {
+fn process_bth_device(bt_path: &str, map: &HashMap<String, String>) -> io::Result<()> {
     let path = Path::new(bt_path);
     let name_re = Regex::new(r"(?m)^Name=(.*)$").unwrap();
 
@@ -108,8 +109,10 @@ fn process_single_device(bt_path: &str, map: &HashMap<String, String>) -> io::Re
                     let new_name = mac.clone();
                     let new_path = path.parent().unwrap().join(&new_name);
                     if new_path != *path {
-                        fs::rename(path, &new_path)?;
-                        println!("  Renamed from {} to {}", file_name, &new_name);
+                        match fs::rename(path, new_path) {
+                            Ok(_) => println!("  Renamed from {} to {}", file_name, &new_name),
+                            Err(e) => eprintln!("Failed to rename folder: {}", e),
+                        }
                     }
                     break;
                 }
@@ -135,11 +138,10 @@ pub fn list_ntfs_mounts() -> Vec<(String, String)> {
     }).collect()
 }
 
-pub fn process_bluetooth_devices(bt_dir_path: &str) -> Result<(), String> {
+pub fn process_bluetooth_devices(bt_dir_path: &str) -> AnyResult<()> {
     let mounts = list_ntfs_mounts();
     if mounts.is_empty() {
-        eprintln!("No NTFS mounts found.");
-        return Err("No NTFS mounts found.".to_string());
+        return Err(anyhow::anyhow!("No NTFS mounts found."));
     }
 
     let mut ltk_map = HashMap::new();
@@ -149,36 +151,35 @@ pub fn process_bluetooth_devices(bt_dir_path: &str) -> Result<(), String> {
             continue;
         }
 
-        match parse_reg(&reg_path) {
-            Ok(parsed) => {
-                if !parsed.is_empty() {
-                    println!("Parsed LTK:");
-                    for (mac, ltk) in &parsed {
-                        println!("{} = {}", mac, ltk);
-                    }
-                    ltk_map = parsed;
-                    break;
-                } else {
-                    eprintln!("No LTK to show.");
-                }
-            },
-            Err(e) => eprintln!("Parse reg error: {}", e),
+        ltk_map = parse_reg(&reg_path).context("Failed to parse registry")?;
+        if !ltk_map.is_empty() {
+            println!("Parsed LTK:");
+            for (mac, ltk) in &ltk_map {
+                println!("{} = {}", mac, ltk);
+            }
+            break;
+        } else {
+            eprintln!("No LTK to show.");
         }
     }
 
     let bt_dir = Path::new(bt_dir_path);
     if let Err(_e) = fs::read_dir(bt_dir) {
-        eprintln!("Bluetooth directory not found at: {}", bt_dir_path);
-        return Err("Bluetooth directory not found".to_string());
+        return Err(anyhow::anyhow!("Bluetooth directory not found at: {}", bt_dir_path));
     }
 
-    for entry in fs::read_dir(bt_dir).unwrap() {
-        let entry = entry.map_err(|e| format!("Read dir error: {e}"))?;
-        if let Some(name) = entry.file_name().to_str() {
-            let bt_path = bt_dir.join(name);
-            if let Err(e) = process_single_device(bt_path.to_str().unwrap(), &ltk_map) {
-                eprintln!("Process device error: {}", e);
-                return Err(format!("Process device error: {}", e));
+    for entry in fs::read_dir(bt_dir)? {
+        let entry = entry.context("Failed to read directory entry")?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            for sub_entry in fs::read_dir(&path)? {
+                let sub_entry = sub_entry.context("Failed to read subdirectory entry")?;
+                let sub_path = sub_entry.path();
+
+                if sub_path.is_dir() {
+                    process_bth_device(sub_path.to_str().unwrap(), &ltk_map).context("Failed to process device")?;
+                }
             }
         }
     }
