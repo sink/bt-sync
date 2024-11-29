@@ -7,6 +7,7 @@ use std::fs;
 use std::io;
 use std::io::Read;
 use std::path::Path;
+use std::str::FromStr;
 use anyhow::{Context, Result as AnyResult};
 
 pub fn fmt_mac(mac: &str) -> String {
@@ -18,17 +19,43 @@ pub fn fmt_mac(mac: &str) -> String {
         .join(":")
 }
 
-pub fn parse_reg(path: &str) -> AnyResult<HashMap<String, String>> {
+pub fn parse_reg(path: &str) -> AnyResult<HashMap<String, (String,String)>> {
     let mut file = fs::File::open(path).context("Failed to open hive")?;
     let mut buf = Vec::<u8>::new();
     file.read_to_end(&mut buf).context("Failed to read hive")?;
 
     let hive = Hive::new(buf.as_ref()).context("Failed to parse hive")?;
     let root = hive.root_key_node().unwrap();
+
+    let mut bt_name_map = HashMap::new();
+    
+    let keys = root.subpath(r"ControlSet001\Services\BTHPORT\Parameters\Devices").unwrap().unwrap();
+    if let Some(subs) = keys.subkeys() {
+        for key in subs.context("Failed to get subkeys")? {
+            let key = key.context("Failed to enumerate key")?;
+            let name = key.name().context("Failed to get name")?;
+
+            if let Some(val) = key.value("Name") {
+                let val = val.unwrap();
+                let vtype = val.data_type().context("Failed to get type")?;
+                if vtype != KeyValueDataType::RegBinary {
+                    continue;
+                }
+
+                match val.data().context("Failed to get binary data")? {
+                    KeyValueData::Small(data) => {
+                        let s = std::str::from_utf8(&data[..data.iter().position(|&r| r == 0).unwrap_or(data.len())]).unwrap();
+                        bt_name_map.insert(name.to_string(), String::from_str(s).unwrap());
+                    },
+                    _ => (),
+                }
+            }
+        }
+    }
+
+    let mut bt_device_info = HashMap::new();
+
     let keys = root.subpath(r"ControlSet001\Services\BTHPORT\Parameters\Keys").unwrap().unwrap();
-
-    let mut ltk_map = HashMap::new();
-
     if let Some(subkeys) = keys.subkeys() {
         for dev in subkeys.context("Failed to get subkeys")? {
             let dev = dev.context("Failed to enumerate key")?;
@@ -49,9 +76,11 @@ pub fn parse_reg(path: &str) -> AnyResult<HashMap<String, String>> {
                             KeyValueData::Small(data) => {
                                 let ltk = data.iter().map(|b| format!("{:02X}", b)).collect::<String>();
                                 let mac = fmt_mac(&name.to_string());
-                                ltk_map.insert(mac, ltk);
+                                
+                                if let Some(bt_name) = bt_name_map.get(&name.to_string()) {
+                                    bt_device_info.insert(bt_name.clone(), (mac, ltk));                                }
                             },
-                            KeyValueData::Big(_) => println!("BIG DATA"),
+                            _ => (),
                         }
                     }
                 }
@@ -59,7 +88,7 @@ pub fn parse_reg(path: &str) -> AnyResult<HashMap<String, String>> {
         }
     }
 
-    Ok(ltk_map)
+    Ok(bt_device_info)
 }
 
 pub fn update_ltk(c: &str, ltk: &str) -> String {
@@ -82,7 +111,7 @@ pub fn update_ltk(c: &str, ltk: &str) -> String {
     }
 }
 
-fn process_bth_device(bt_path: &str, map: &HashMap<String, String>) -> io::Result<()> {
+fn process_bth_device(bt_path: &str, bt_device_info: &HashMap<String, (String,String)>) -> io::Result<()> {
     let path = Path::new(bt_path);
     let name_re = Regex::new(r"(?m)^Name=(.*)$").unwrap();
 
@@ -95,18 +124,18 @@ fn process_bth_device(bt_path: &str, map: &HashMap<String, String>) -> io::Resul
         let content = fs::read_to_string(&info_path)?;
 
         if let Some(caps) = name_re.captures(&content) {
-            let name = caps.get(1).map_or("", |m| m.as_str());
+            let name = caps.get(1).map_or("", |m| m.as_str()).to_string();
             println!("Proc device: {}, Name: {}", file_name, name);
 
-            for (mac, ltk) in map {
-                if file_name.starts_with(&mac[..8]) {
-                    println!("  Update LTK: {}", ltk);
-                    let new_content = update_ltk(&content, ltk);
+            for (bt_name, info) in bt_device_info {
+                if bt_name.clone() == name {
+                    println!("  Update LTK: {}", info.1);
+                    let new_content = update_ltk(&content, info.1.as_str()); // LTK
 
                     let updated_path = format!("{}.updated", info_path.to_str().unwrap());
                     fs::write(updated_path, &new_content)?;
 
-                    let new_name = mac.clone();
+                    let new_name = info.0.clone(); // MAC ADDR
                     let new_path = path.parent().unwrap().join(&new_name);
                     if new_path != *path {
                         match fs::rename(path, new_path) {
@@ -144,22 +173,23 @@ pub fn process_bluetooth_devices(bt_dir_path: &str) -> AnyResult<()> {
         return Err(anyhow::anyhow!("No NTFS mounts found."));
     }
 
-    let mut ltk_map = HashMap::new();
+    let mut bt_device_info = HashMap::new();
     for (_device, mount) in mounts {
         let reg_path = format!("{}/Windows/System32/config/SYSTEM", mount);
         if !std::path::Path::new(&reg_path).exists() {
             continue;
         }
 
-        ltk_map = parse_reg(&reg_path).context("Failed to parse registry")?;
-        if !ltk_map.is_empty() {
-            println!("Parsed LTK:");
-            for (mac, ltk) in &ltk_map {
-                println!("{} = {}", mac, ltk);
+        bt_device_info = parse_reg(&reg_path).context("Failed to parse registry")?;
+        if !bt_device_info.is_empty() {
+            println!("LTK Map contents:");
+            for (bt_name, (mac, ltk)) in &bt_device_info {
+                println!("BT Name: {}, MAC: {}, LTK: {}", bt_name, mac, ltk);
             }
             break;
         } else {
             eprintln!("No LTK to show.");
+            return Ok(());
         }
     }
 
@@ -178,7 +208,7 @@ pub fn process_bluetooth_devices(bt_dir_path: &str) -> AnyResult<()> {
                 let sub_path = sub_entry.path();
 
                 if sub_path.is_dir() {
-                    process_bth_device(sub_path.to_str().unwrap(), &ltk_map).context("Failed to process device")?;
+                    process_bth_device(sub_path.to_str().unwrap(), &bt_device_info).context("Failed to process device")?;
                 }
             }
         }
