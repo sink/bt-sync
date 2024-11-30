@@ -81,10 +81,10 @@ pub fn update_ltk(c: &str, ltk: &str) -> String {
     updated
 }
 
-fn process_bth_device(bt_path: &str, bt_device_info: &HashMap<String, (String, String)>) -> AnyResult<()> {
+pub fn process_bth_device(bt_path: &str, bt_device_info: &HashMap<String, (String, String)>) -> AnyResult<()> {
     let path = Path::new(bt_path);
     if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
-        if !file_name.contains(':') {
+        if file_name.contains(':') {
             let info_path = path.join("info");
             let content = fs::read_to_string(&info_path)?;
             if let Some(name) = Regex::new(r"(?m)^name=(.*)$").unwrap().captures(&content).and_then(|caps| caps.get(1).map(|m| m.as_str().to_string())) {

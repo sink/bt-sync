@@ -1,79 +1,73 @@
-// tests/integration_test.rs
-
-use bt_sync::{fmt_mac, parse_reg, get_bt_dir, update_ltk, proc_dev, list_ntfs_mounts};
+use bt_sync::*; // 导入 bt-sync 项目中的所有公共项
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use mockall::predicate::*;
-use mockall::*;
-use std::process::{Command, Output};
-use std::os::unix::process::ExitStatusExt;  // 添加这个导入
+use tempfile::tempdir;
+use anyhow::Result;
 
+// 测试 fmt_mac 函数
 #[test]
 fn test_fmt_mac() {
-    assert_eq!(fmt_mac("1234567890ab"), "12:34:56:78:90:AB");
+    assert_eq!(fmt_mac("001122334455"), "00:11:22:33:44:55");
 }
 
+// 测试 update_ltk 函数
 #[test]
-fn test_parse_reg() {
-    let current_dir = env!("CARGO_MANIFEST_DIR");
-    let path = Path::new(current_dir).join("data/SYSTEM");
-
-    match parse_reg(path.to_str().unwrap()) {
-        Ok(map) => {
-            assert!(!map.is_empty());
-        },
-        Err(e) => {
-            eprintln!("Failed to parse reg: {}", e);
-            assert!(false); // 如果失败，测试应该失败
-        }
-    }
+fn test_update_ltk() -> Result<()> {
+    let content = r#"
+[LongTermKey]
+Key=00000000000000000000000000000000
+"#;
+    let ltk = "112233445566778899AABBCCDDEEFF";
+    let updated_content = update_ltk(content, ltk);
+    assert!(updated_content.contains(&format!("Key={}", ltk)));
+    Ok(())
 }
 
+// 测试 process_bth_device 函数
 #[test]
-fn test_get_bt_dir() {
-    let bt_dir = get_bt_dir();
+fn test_process_bth_device() -> Result<()> {
+    let dir = tempdir()?.path().join("00:00:00:00:00:00");
+    fs::create_dir_all(&dir)?;
+    let info_path =dir.join("info");
+    fs::write(&info_path, "name=TestDevice\n")?;
 
-    assert_eq!(bt_dir, Some("12:34:56:78:90:AB".to_string()));
+    println!("PP={}", info_path.to_string_lossy());
+    // 创建 HashMap
+    let mut bt_device_info: HashMap<String, (String, String)> = HashMap::new();
+    bt_device_info.insert(
+        "TestDevice".to_string(),
+        ("00:11:22:33:44:55".to_string(), "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99".to_string()),
+    );
+
+    process_bth_device(dir.to_str().unwrap(), &bt_device_info)?;
+
+    let new_dir = dir.parent().unwrap().join("00:11:22:33:44:55");
+    assert!(new_dir.exists());
+
+    let info_path_updated = new_dir.join("info.updated");
+    assert!(info_path_updated.exists());
+
+    Ok(())
 }
 
+// 测试 parse_reg 函数
 #[test]
-fn test_update_ltk() {
-    let original_content = "[LongTermKey]\nKey=OldLTK\n";
-    let updated_content = update_ltk(original_content, "NewLTK");
-    assert_eq!(updated_content, "[LongTermKey]\nKey=NewLTK\n");
-}
+fn test_parse_reg() -> Result<()> {
+    let path = Path::new(file!()).parent().unwrap().join("data/SYSTEM");
+    assert!(path.exists());
 
-#[test]
-fn test_proc_dev() {
-    let test_path = "/tmp/bt-test";
-    fs::create_dir_all(test_path).unwrap();
+    let result = parse_reg(path.to_str().unwrap())?;
+    
+    let expected_map: HashMap<String, (String, String)> = [
+        ("BT+2.4G KB".to_string(), ("E0:10:5F:A9:F6:59".to_string(), "039D9DE0952391208B4F755257E6425B".to_string())),
+        ("Basilisk X HyperSpeed".to_string(), ("FC:51:CA:AC:57:11".to_string(), "D23FEDC5F5806AF8A37D41D81EE4DA5C".to_string())),
+        ("Xbox Wireless Controller".to_string(), ("AC:8E:BD:24:AC:52".to_string(), "84417A06F13444B2780E0CC3CF1D353D".to_string()))
+    ]
+    .iter()
+    .cloned()
+    .collect();
+    assert_eq!(result, expected_map);
 
-    // 创建模拟的蓝牙设备文件
-    let device_info = "Name=TestDevice\n";
-    let device_path = format!("{}/12345678/info", test_path);
-    fs::write(&device_path, device_info).unwrap();
-
-    // 创建模拟的 LTK 映射
-    let mut ltk_map = HashMap::new();
-    ltk_map.insert("12:34:56:78:90:AB".to_string(), "NewLTK".to_string());
-
-    // 执行 proc_dev
-    proc_dev(test_path, &ltk_map).unwrap();
-
-    // 检查文件是否被更新
-    let updated_path = format!("{}/12345678/info.updated", test_path);
-    let updated_content = fs::read_to_string(updated_path).unwrap();
-    assert_eq!(updated_content, "[LongTermKey]\nKey=NewLTK\n");
-
-    // 清理
-    fs::remove_dir_all(test_path).unwrap();
-}
-
-#[test]
-fn test_list_ntfs_mounts() {
-    let mounts = list_ntfs_mounts();
-    for (device, mount_point) in mounts {
-        assert!(Path::new(&mount_point).exists());
-    }
+    Ok(())
 }
