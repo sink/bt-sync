@@ -60,6 +60,12 @@ pub fn parse_reg(path: &str) -> AnyResult<HashMap<String, (String, String)>> {
         }
     }
 
+    println!("{:<30} | {:<20} | {:<40}", "Device Name", "Address", "Key");
+    println!("{}", "-".repeat(88));
+    for (name, (mac, uuid)) in &bt_device_info {
+        println!("{:<30} | {:<20} | {:<40}", name, mac, uuid);
+    }
+
     Ok(bt_device_info)
 }
 
@@ -91,7 +97,7 @@ pub fn process_bth_device(bt_path: &str, bt_device_info: &HashMap<String, (Strin
                 if let Some((mac, ltk)) = bt_device_info.get(&name) {
                     let new_content = update_ltk(&content, ltk);
                     fs::write(format!("{}.updated", info_path.to_str().unwrap()), &new_content)?;
-                    fs::rename(path, path.parent().unwrap().join(mac))?;
+                    // fs::rename(path, path.parent().unwrap().join(mac))?;
                 }
             }
         }

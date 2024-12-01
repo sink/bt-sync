@@ -1,15 +1,43 @@
 use bt_sync::*;
 use std::process;
+use ansi_term::Colour::RGB;
 
-fn main() {
-    if !is_root() {
-        restart_with_sudo();
-        return;
-    }
+fn print_colored_ascii() {
+    let ascii_art = r#"
+  888888b. 88888888888                   .d8888b. Y88b   d88P 888b    888  .d8888b.  
+  888  "88b    888                      d88P  Y88b Y88b d88P  8888b   888 d88P  Y88b 
+  888  .88P    888                      Y88b.       Y88o88P   88888b  888 888    888 
+  8888888K.    888                       "Y888b.     Y888P    888Y88b 888 888        
+  888  "Y88b   888          888888          "Y88b.    888     888 Y88b888 888        
+  888    888   888                            "888    888     888  Y88888 888    888 
+  888   d88P   888                      Y88b  d88P    888     888   Y8888 Y88b  d88P 
+  8888888P"    888                       "Y8888P"     888     888    Y888  "Y8888P"                                                                                                                                           
 
-    if let Err(e) = process_bluetooth_devices("/var/lib/bluetooth/") {
-        eprintln!("Error: {}", e);
-        process::exit(1);
+"#;
+
+  
+    let global_start_color = (255, 0, 0);  // 红色
+    let global_end_color = (0, 0, 255);    // 蓝色
+
+    for (line_index, line) in ascii_art.lines().enumerate() {
+        for (col_index, c) in line.chars().enumerate() {
+            let row_factor = line_index as f32 / ascii_art.lines().count() as f32; 
+            let col_factor = col_index as f32 / line.len() as f32;  
+            let factor = (row_factor + col_factor) / 2.0;  
+
+            fn lerp(a: f32, b: f32, t: f32) -> f32 {
+                a + t * (b - a)
+            }
+
+            let color = (
+                lerp(global_start_color.0 as f32, global_end_color.0 as f32, factor) as u8,
+                lerp(global_start_color.1 as f32, global_end_color.1 as f32, factor) as u8,
+                lerp(global_start_color.2 as f32, global_end_color.2 as f32, factor) as u8,
+            );
+
+            print!("{}", RGB(color.0, color.1, color.2).paint(c.to_string()));
+        }
+        println!();
     }
 }
 
@@ -41,4 +69,18 @@ fn restart_with_sudo() {
         .args(&args[1..])
         .status()
         .expect("Failed to execute sudo");
+}
+
+fn main() {
+    if !is_root() {
+        restart_with_sudo();
+        return;
+    }
+
+    print_colored_ascii();
+
+    if let Err(e) = process_bluetooth_devices("/var/lib/bluetooth/") {
+        eprintln!("Error: {}", e);
+        process::exit(1);
+    }
 }
