@@ -1,6 +1,6 @@
 use bt_sync::*;
 use std::process;
-use ansi_term::Colour::RGB;
+use term_ansi::*;
 
 fn print_colored_ascii() {
     let ascii_art = r#"
@@ -15,7 +15,6 @@ fn print_colored_ascii() {
 
 "#;
 
-  
     let global_start_color = (255, 0, 0);  // 红色
     let global_end_color = (0, 0, 255);    // 蓝色
 
@@ -35,7 +34,7 @@ fn print_colored_ascii() {
                 lerp(global_start_color.2 as f32, global_end_color.2 as f32, factor) as u8,
             );
 
-            print!("{}", RGB(color.0, color.1, color.2).paint(c.to_string()));
+            print!("{}", rgb!(color.0, color.1, color.2, "{}", c.to_string()));
         }
         println!();
     }

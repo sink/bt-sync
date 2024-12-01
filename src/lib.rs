@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use anyhow::{Context, Result as AnyResult};
+use anyhow::{Context, Ok, Result as AnyResult};
+use term_ansi::*;
 
 pub fn fmt_mac(mac: &str) -> String {
     mac.as_bytes()
@@ -60,7 +61,9 @@ pub fn parse_reg(path: &str) -> AnyResult<HashMap<String, (String, String)>> {
         }
     }
 
-    println!("{:<30} | {:<20} | {:<40}", "Device Name", "Address", "Key");
+    println!("{}", green!("=== Get bluetooth info from {} ===", red!("{}", path)));
+
+    println!("{} | {} | {}", blue!("{:<30}", "Device Name"), blue!("{:<20}", "Address"), blue!("{:<40} ", "Key"));
     println!("{}", "-".repeat(88));
     for (name, (mac, uuid)) in &bt_device_info {
         println!("{:<30} | {:<20} | {:<40}", name, mac, uuid);
@@ -87,22 +90,77 @@ pub fn update_ltk(c: &str, ltk: &str) -> String {
     updated
 }
 
-pub fn process_bth_device(bt_path: &str, bt_device_info: &HashMap<String, (String, String)>) -> AnyResult<()> {
-    let path = Path::new(bt_path);
-    if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
-        if file_name.contains(':') {
-            let info_path = path.join("info");
-            let content = fs::read_to_string(&info_path)?;
-            if let Some(name) = Regex::new(r"(?m)^name=(.*)$").unwrap().captures(&content).and_then(|caps| caps.get(1).map(|m| m.as_str().to_string())) {
-                if let Some((mac, ltk)) = bt_device_info.get(&name) {
-                    let new_content = update_ltk(&content, ltk);
-                    fs::write(format!("{}.updated", info_path.to_str().unwrap()), &new_content)?;
-                    // fs::rename(path, path.parent().unwrap().join(mac))?;
+pub fn get_ltk(c: &str) -> String {
+    let mut in_ltk = false;
+    for line in c.lines() {
+        if line.trim() == "[LongTermKey]" {
+            in_ltk = true;
+            continue;
+        }
+        if in_ltk && line.starts_with("Key=") {
+            return line[4..].to_string();
+        }
+    }
+    return "".to_string();
+}
+
+fn restart_bluetooth_service() {
+    use std::process::Command;
+    let output = Command::new("systemctl")
+        .arg("restart")
+        .arg("bluetooth")
+        .output()
+        .expect("Failed to execute command");
+
+    if output.status.success() {
+        println!("\n{}", green!("=== Bluetooth service restarted successfully. ==="));
+    } else {
+        eprintln!("\nFailed to restart Bluetooth service. Error: {}", String::from_utf8_lossy(&output.stderr));
+    }
+}
+
+pub fn process_bth_device(path: std::path::PathBuf, bt_device_info: &HashMap<String, (String, String)>) -> AnyResult<()> {
+    let mut result_map = HashMap::new();
+
+    for sub_entry in fs::read_dir(&path)? {
+        let sub_path = sub_entry?.path();
+        if sub_path.is_dir() {
+            let path = Path::new(sub_path.to_str().unwrap());
+            if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
+                if file_name.contains(':') {
+                    let info_path = path.join("info");
+                    let content = fs::read_to_string(&info_path)?;
+                    if let Some(name) = Regex::new(r"(?m)^Name=(.*)$").unwrap().captures(&content).and_then(|caps| caps.get(1).map(|m| m.as_str().to_string())) {
+                        let ltk_old = get_ltk(&content);
+                        if let Some((mac, ltk)) = bt_device_info.get(&name) {
+                            let new_content = update_ltk(&content, ltk);
+                            fs::write(format!("{}", info_path.to_str().unwrap()), &new_content)?;
+                            fs::rename(path, path.parent().unwrap().join(mac))?;
+        
+                            result_map.insert(name, (file_name.to_string(), mac, ltk_old, ltk.clone()));
+                        }
+                    }
                 }
             }
+
         }
     }
 
+    if result_map.is_empty() {
+        println!("{}", green!("\n=== NO LINUX bluetooth info found from {} ===", red!("{}", path.to_string_lossy())));
+        return Ok(())
+    }
+
+    println!("{}", green!("\n=== Set LINUX bluetooth info from {} ===", red!("{}", path.to_string_lossy())));
+
+    println!("{} | {} | {}", blue!("{:<30}", "Device Name"), blue!("{:<29}", "Address"), blue!("{:<40} ", "Key"));
+    println!("{}", "-".repeat(88));
+    for (name, (old_mac, new_mac, old_ltk, new_ltk)) in &result_map {
+        println!("{} | FROM {} | FROM {}", cyan!("{:<30}", name), yellow!("{:<24}", old_mac), yellow!("{:<40}", old_ltk));
+        println!("{} |   TO {} |   TO {}", cyan!("{:<30}", ""), magenta!("{:<24}", new_mac), magenta!("{:<40}", new_ltk));
+    }
+
+    restart_bluetooth_service();
     Ok(())
 }
 
@@ -139,19 +197,11 @@ pub fn process_bluetooth_devices(bt_dir_path: &str) -> AnyResult<()> {
 
             for entry in fs::read_dir(bt_dir_path)? {
                 let path = entry?.path();
-
                 if path.is_dir() {
-                    for sub_entry in fs::read_dir(&path)? {
-                        let sub_path = sub_entry?.path();
-
-                        if sub_path.is_dir() {
-                            process_bth_device(sub_path.to_str().unwrap(), &bt_device_info)?;
-                        }
-                    }
+                    process_bth_device(path, &bt_device_info)?;
                 }
             }
             break;
-
         }
     }
 
