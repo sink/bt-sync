@@ -1,6 +1,6 @@
 use nt_hive::{Hive, KeyValueData};
 use regex::Regex;
-use std::collections::HashMap;
+use std::{collections::HashMap, process::Command};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -67,6 +67,54 @@ pub fn parse_reg(path: &str) -> AnyResult<HashMap<String, (String, String)>> {
     println!("{}", "-".repeat(88));
     for (name, (mac, uuid)) in &bt_device_info {
         println!("{:<30} | {:<20} | {:<40}", name, mac, uuid);
+    }
+
+    Ok(bt_device_info)
+}
+
+fn find_and_mount_ntfs_partitions() -> AnyResult<HashMap<String, (String, String)>> {
+    let mut bt_device_info:HashMap<String, (String, String)> = HashMap::new();
+
+    let output = Command::new("lsblk")
+        .args(["-o", "NAME,FSTYPE,MOUNTPOINT", "--pairs", "--noheadings"])
+        .output()?;
+    if !output.status.success() {
+        return Ok(bt_device_info);
+    }
+
+    let re = Regex::new(r#"NAME="([^"]+)" FSTYPE="([^"]+)" MOUNTPOINT="([^"]*)""#).unwrap();
+    for cap in re.captures_iter(&String::from_utf8_lossy(&output.stdout)) {
+        let (name, fstype, mountpoint) = (cap[1].to_string(), cap[2].to_string(), cap[3].to_string());
+
+        if fstype == "ntfs" {
+            if mountpoint.is_empty() {
+                let device = format!("/dev/{}", name);
+                let mount_point = "/mnt/temp";
+                fs::create_dir_all(mount_point)?;
+
+                let mount_status = Command::new("mount").args(["-t", "ntfs3", &device, mount_point]).status()?;
+                if mount_status.success() {
+                    let reg_path = format!("{}/Windows/System32/config/SYSTEM", mount_point);
+                    println!("name={}, mountpoint={}, reg_path={}", name, mount_point, reg_path);
+                    if std::path::Path::new(&reg_path).exists() {
+                        bt_device_info = parse_reg(&reg_path).context("Failed to parse registry")?;
+                        if !bt_device_info.is_empty() {
+                            let _ = Command::new("umount").arg(mount_point).status();
+                            break;
+                        }
+                    }
+                }
+                let _ = Command::new("umount").arg(mount_point).status();
+            } else {
+                let reg_path = format!("{}/Windows/System32/config/SYSTEM", mountpoint);
+                if std::path::Path::new(&reg_path).exists() {
+                    let bt_device_info = parse_reg(&reg_path).context("Failed to parse registry")?;
+                    if !bt_device_info.is_empty() {
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     Ok(bt_device_info)
@@ -181,29 +229,18 @@ pub fn list_ntfs_mounts() -> Vec<String> {
 }
 
 pub fn process_bluetooth_devices(bt_dir_path: &str) -> AnyResult<()> {
-    let mounts = list_ntfs_mounts();
-    if mounts.is_empty() {
-        return Err(anyhow::anyhow!("No NTFS mounts found."));
+    let bt_device_info = find_and_mount_ntfs_partitions().context("Failed to parse registry")?;
+    if bt_device_info.is_empty() {
+        eprintln!("No LTK to show.");
+        return Ok(());
     }
 
-    for mount in mounts {
-        let reg_path = format!("{}/Windows/System32/config/SYSTEM", mount);
-        if std::path::Path::new(&reg_path).exists() {
-            let bt_device_info = parse_reg(&reg_path).context("Failed to parse registry")?;
-            if bt_device_info.is_empty() {
-                eprintln!("No LTK to show.");
-                return Ok(());
-            }
-
-            for entry in fs::read_dir(bt_dir_path)? {
-                let path = entry?.path();
-                if path.is_dir() {
-                    process_bth_device(path, &bt_device_info)?;
-                }
-            }
-            break;
+    for entry in fs::read_dir(bt_dir_path)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            process_bth_device(path, &bt_device_info)?;
         }
     }
-
+    
     Ok(())
 }
