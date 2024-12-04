@@ -169,6 +169,8 @@ pub fn get_ltk(c: &str) -> String {
 }
 
 fn restart_bluetooth_service() {
+    if std::env::var("TESTING").is_ok() { return;}
+
     let output = Command::new("systemctl").args(["restart", "bluetooth"]).output().expect("Failed to execute command");
 
     if output.status.success() {

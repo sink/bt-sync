@@ -5,59 +5,108 @@ use std::path::Path;
 use tempfile::tempdir;
 use anyhow::Result;
 
-// 测试 fmt_mac 函数
 #[test]
 fn test_fmt_mac() {
     assert_eq!(fmt_mac("001122334455"), "00:11:22:33:44:55");
 }
 
-// 测试 update_ltk 函数
 #[test]
 fn test_update_ltk() -> Result<()> {
     let content = r#"
 [LongTermKey]
 Key=00000000000000000000000000000000
-"#;
+Name=test"#;
     let ltk = "112233445566778899AABBCCDDEEFF";
     let updated_content = update_ltk(content, ltk);
     assert!(updated_content.contains(&format!("Key={}", ltk)));
     Ok(())
 }
 
-// 测试 process_bth_device 函数
 #[test]
-fn test_process_bth_device() -> Result<()> {
-    let dir = tempdir()?.path().join("00:00:00:00:00:00");
+fn test_process_bth_device() -> Result<(), Box<dyn std::error::Error>> {
+    let temp_dir = tempdir()?;
+    let dir = temp_dir.path().join("00:00:00:00:00:00");
     fs::create_dir_all(&dir)?;
-    let info_path =dir.join("info");
-    fs::write(&info_path, "name=TestDevice\n")?;
+
+    let info_content = r#"[General]
+Name=Basilisk X HyperSpeed
+Appearance=0x03c2
+AddressType=static
+SupportedTechnologies=LE;
+Trusted=true
+Blocked=false
+WakeAllowed=true
+Services=00001800-0000-1000-8000-00805f9b34fb;00001801-0000-1000-8000-00805f9b34fb;0000180a-0000-1000-8000-00805f9b34fb;0000180f-0000-1000-8000-00805f9b34fb;00001812-0000-1000-8000-00805f9b34fb;52401523-f97c-7f90-0e7f-6c6f4e36db1c;
+
+[IdentityResolvingKey]
+Key=8EC94951919F694C8DBFD5E0BEA21536
+
+[LongTermKey]
+Key=D23FEDC5F5806AF8A37D41D81EE4DA5C
+Authenticated=0
+EncSize=16
+EDiv=17209
+Rand=189227263063048024
+
+[PeripheralLongTermKey]
+Key=414C87970DBAE282734D2BDCC1157C30
+Authenticated=0
+EncSize=16
+EDiv=27023
+Rand=15138338010761522440
+
+[SlaveLongTermKey]
+Key=414C87970DBAE282734D2BDCC1157C30
+Authenticated=0
+EncSize=16
+EDiv=27023
+Rand=15138338010761522440
+
+[ConnectionParameters]
+MinInterval=6
+MaxInterval=9
+Latency=20
+Timeout=300
+
+[DeviceID]
+Source=2
+Vendor=5426
+Product=130
+Version=1"#;
+
+    let info_path = dir.join("info");
+    fs::write(&info_path, info_content)?;
 
     println!("PP={}", info_path.to_string_lossy());
-    // 创建 HashMap
+
     let mut bt_device_info: HashMap<String, (String, String)> = HashMap::new();
+    let new_ltk = "DEADBEEF00000000DEADBEEF00000000";
     bt_device_info.insert(
-        "TestDevice".to_string(),
-        ("00:11:22:33:44:55".to_string(), "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99".to_string()),
+        "Basilisk X HyperSpeed".to_string(),
+        ("00:11:22:33:44:55".to_string(), new_ltk.to_string()),
     );
 
-    process_bth_device(dir.to_str().unwrap(), &bt_device_info)?;
+    std::env::set_var("TESTING", "true");
+    process_bth_device(temp_dir.path().to_path_buf(), &bt_device_info)?;
 
     let new_dir = dir.parent().unwrap().join("00:11:22:33:44:55");
     assert!(new_dir.exists());
 
-    let info_path_updated = new_dir.join("info.updated");
-    assert!(info_path_updated.exists());
+    let info_path = new_dir.join("info");
+    let content = fs::read_to_string(&info_path)?;
+    let ltk = get_ltk(&content);
+    assert_eq!(ltk, new_ltk);
 
     Ok(())
 }
 
-// 测试 parse_reg 函数
+
 #[test]
 fn test_parse_reg() -> Result<()> {
-    let path = Path::new(file!()).parent().unwrap().join("data/SYSTEM");
+    let path = Path::new(file!()).parent().unwrap().join("data");
     assert!(path.exists());
 
-    let result = parse_reg(path.to_str().unwrap())?;
+    let result = parse_reg("/dev/test", path.to_str().unwrap())?;
     
     let expected_map: HashMap<String, (String, String)> = [
         ("BT+2.4G KB".to_string(), ("E0:10:5F:A9:F6:59".to_string(), "039D9DE0952391208B4F755257E6425B".to_string())),
