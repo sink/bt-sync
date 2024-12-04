@@ -1,11 +1,13 @@
 use nt_hive::{Hive, KeyValueData};
 use regex::Regex;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, process::Command};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
 use anyhow::{Context, Ok, Result as AnyResult};
 use term_ansi::*;
+use rand::Rng;
 
 pub fn fmt_mac(mac: &str) -> String {
     mac.as_bytes()
@@ -15,7 +17,12 @@ pub fn fmt_mac(mac: &str) -> String {
        .join(":")
 }
 
-pub fn parse_reg(path: &str) -> AnyResult<HashMap<String, (String, String)>> {
+pub fn parse_reg(device: &str, mountpoint: &str) -> AnyResult<HashMap<String, (String, String)>> {
+    let path = format!("{}/Windows/System32/config/SYSTEM", mountpoint);
+    if !std::path::Path::new(&path).exists() {
+        return Ok(HashMap::new());
+    }
+
     let mut file = fs::File::open(path).context("Failed to open hive")?;
     let mut buf = Vec::<u8>::new();
     file.read_to_end(&mut buf).context("Failed to read hive")?;
@@ -61,12 +68,12 @@ pub fn parse_reg(path: &str) -> AnyResult<HashMap<String, (String, String)>> {
         }
     }
 
-    println!("{}", green!("=== Get bluetooth info from {} ===", red!("{}", path)));
+    println!("{}", green!("=== Get Windows bluetooth info from {} ===", red!("{}", device)));
 
-    println!("{} | {} | {}", blue!("{:<30}", "Device Name"), blue!("{:<20}", "Address"), blue!("{:<40} ", "Key"));
+    println!("{} |      {} |      {}", blue!("{:<30}", "Device Name"), blue!("{:<24}", "Address"), blue!("{:<40} ", "Key"));
     println!("{}", "-".repeat(88));
     for (name, (mac, uuid)) in &bt_device_info {
-        println!("{:<30} | {:<20} | {:<40}", name, mac, uuid);
+        println!("{:<30} |      {:<24} |      {:<40}", name, mac, uuid);
     }
 
     Ok(bt_device_info)
@@ -89,29 +96,38 @@ fn find_and_mount_ntfs_partitions() -> AnyResult<HashMap<String, (String, String
         if fstype == "ntfs" {
             if mountpoint.is_empty() {
                 let device = format!("/dev/{}", name);
-                let mount_point = "/mnt/temp";
-                fs::create_dir_all(mount_point)?;
+                let start = SystemTime::now();
+                let since_the_epoch = start.duration_since(UNIX_EPOCH)
+                    .expect("Time went backwards");
+                let timestamp = since_the_epoch.as_millis();
+                let random_suffix: u32 = rand::thread_rng().gen();
+            
+                let mount_point = format!("/mnt/temp_{}_{}", timestamp, random_suffix);
+                fs::create_dir_all(mount_point.clone())?;
 
-                let mount_status = Command::new("mount").args(["-t", "ntfs3", &device, mount_point]).status()?;
+                let mount_status = Command::new("mount").args(["-t", "ntfs3", &device, &mount_point]).status()?;
                 if mount_status.success() {
-                    let reg_path = format!("{}/Windows/System32/config/SYSTEM", mount_point);
-                    println!("name={}, mountpoint={}, reg_path={}", name, mount_point, reg_path);
-                    if std::path::Path::new(&reg_path).exists() {
-                        bt_device_info = parse_reg(&reg_path).context("Failed to parse registry")?;
-                        if !bt_device_info.is_empty() {
-                            let _ = Command::new("umount").arg(mount_point).status();
-                            break;
-                        }
-                    }
-                }
-                let _ = Command::new("umount").arg(mount_point).status();
-            } else {
-                let reg_path = format!("{}/Windows/System32/config/SYSTEM", mountpoint);
-                if std::path::Path::new(&reg_path).exists() {
-                    let bt_device_info = parse_reg(&reg_path).context("Failed to parse registry")?;
+                    bt_device_info = parse_reg(&device, &mount_point).context("Failed to parse registry")?;
                     if !bt_device_info.is_empty() {
+                        let umount_status = Command::new("umount").arg(mount_point.clone()).status()?;
+                        if umount_status.success() {
+                            if fs::read_dir(mount_point.clone()).ok().and_then(|mut iter| iter.next()).is_none() {
+                                fs::remove_dir(&mount_point)?;
+                            } 
+                        }
                         break;
                     }
+                }
+                let umount_status = Command::new("umount").arg(mount_point.clone()).status()?;
+                if umount_status.success() {
+                    if fs::read_dir(mount_point.clone()).ok().and_then(|mut iter| iter.next()).is_none() {
+                        fs::remove_dir(&mount_point)?;
+                    } 
+                }
+            } else {
+                let bt_device_info = parse_reg(&name, &mountpoint).context("Failed to parse registry")?;
+                if !bt_device_info.is_empty() {
+                    break;
                 }
             }
         }
@@ -153,12 +169,7 @@ pub fn get_ltk(c: &str) -> String {
 }
 
 fn restart_bluetooth_service() {
-    use std::process::Command;
-    let output = Command::new("systemctl")
-        .arg("restart")
-        .arg("bluetooth")
-        .output()
-        .expect("Failed to execute command");
+    let output = Command::new("systemctl").args(["restart", "bluetooth"]).output().expect("Failed to execute command");
 
     if output.status.success() {
         println!("\n{}", green!("=== Bluetooth service restarted successfully. ==="));
@@ -195,13 +206,13 @@ pub fn process_bth_device(path: std::path::PathBuf, bt_device_info: &HashMap<Str
     }
 
     if result_map.is_empty() {
-        println!("{}", green!("\n=== NO LINUX bluetooth info found from {} ===", red!("{}", path.to_string_lossy())));
+        println!("{}", green!("\n=== NO Linux bluetooth info found from {} ===", red!("{}", path.to_string_lossy())));
         return Ok(())
     }
 
-    println!("{}", green!("\n=== Set LINUX bluetooth info from {} ===", red!("{}", path.to_string_lossy())));
+    println!("{}", green!("\n=== Update Linux bluetooth info ==="));
 
-    println!("{} | {} | {}", blue!("{:<30}", "Device Name"), blue!("{:<29}", "Address"), blue!("{:<40} ", "Key"));
+    println!("{} |      {} | {}", blue!("{:<30}", "Device Name"), blue!("{:<24}", "Address"), blue!("{:<40} ", "Key"));
     println!("{}", "-".repeat(88));
     for (name, (old_mac, new_mac, old_ltk, new_ltk)) in &result_map {
         println!("{} | FROM {} | FROM {}", cyan!("{:<30}", name), yellow!("{:<24}", old_mac), yellow!("{:<40}", old_ltk));
@@ -210,22 +221,6 @@ pub fn process_bth_device(path: std::path::PathBuf, bt_device_info: &HashMap<Str
 
     restart_bluetooth_service();
     Ok(())
-}
-
-pub fn list_ntfs_mounts() -> Vec<String> {
-    use std::process::Command;
-    let output = Command::new("mount").output().expect("Mount cmd failed");
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() > 4 && ["ntfs", "ntfs3"].contains(&parts[4].to_lowercase().as_str()) {
-                Some(parts[2].to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 pub fn process_bluetooth_devices(bt_dir_path: &str) -> AnyResult<()> {
