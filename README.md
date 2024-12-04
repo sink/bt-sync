@@ -5,7 +5,7 @@
 
 ## Features
 - Cross-platform Sync: Extracts Bluetooth device information from the Windows registry and syncs it to the Linux system.
-- Automatic NTFS Partition Mounting: Automatically finds and mounts NTFS partitions containing the - Windows system to access registry files.
+- Automatic NTFS Partition Mounting: Automatically finds and mounts NTFS partitions containing the Windows system to access registry files.
 - Bluetooth Device Handling: Updates Bluetooth device configuration files located in /var/lib/bluetooth/ to ensure LTK consistency.
 
 ## Usage
