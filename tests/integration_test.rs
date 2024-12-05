@@ -1,4 +1,4 @@
-use bt_sync::*; // 导入 bt-sync 项目中的所有公共项
+use bt_sync::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;

@@ -8,6 +8,9 @@
 - Automatic NTFS Partition Mounting: Automatically finds and mounts NTFS partitions containing the Windows system to access registry files.
 - Bluetooth Device Handling: Updates Bluetooth device configuration files located in /var/lib/bluetooth/ to ensure LTK consistency.
 
+## Screenshot
+![screenshot](screenshot.png)
+
 ## Usage
 ### Configuring Bluetooth Devices
 Before synchronizing Bluetooth device information, ensure that you have paired the Bluetooth - devices on both Linux and Windows systems to save the latest device information.
