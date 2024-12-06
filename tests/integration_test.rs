@@ -17,7 +17,7 @@ fn test_update_ltk() -> Result<()> {
 Key=00000000000000000000000000000000
 Name=test"#;
     let ltk = "112233445566778899AABBCCDDEEFF";
-    let updated_content = update_ltk(content, ltk);
+    let updated_content = update_bt_info(content, ltk);
     assert!(updated_content.contains(&format!("Key={}", ltk)));
     Ok(())
 }
@@ -109,8 +109,8 @@ fn test_parse_reg() -> Result<()> {
     let result = parse_reg("/dev/test", path.to_str().unwrap())?;
     
     let expected_map: HashMap<String, (String, String)> = [
-        ("BT+2.4G KB".to_string(), ("E0:10:5F:A9:F6:59".to_string(), "039D9DE0952391208B4F755257E6425B".to_string())),
-        ("Basilisk X HyperSpeed".to_string(), ("FC:51:CA:AC:57:11".to_string(), "D23FEDC5F5806AF8A37D41D81EE4DA5C".to_string())),
+        ("BT+2.4G KB".to_string(),               ("E0:10:5F:A9:F6:59".to_string(), "039D9DE0952391208B4F755257E6425B".to_string())),
+        ("Basilisk X HyperSpeed".to_string(),    ("FC:51:CA:AC:57:11".to_string(), "D23FEDC5F5806AF8A37D41D81EE4DA5C".to_string())),
         ("Xbox Wireless Controller".to_string(), ("AC:8E:BD:24:AC:52".to_string(), "84417A06F13444B2780E0CC3CF1D353D".to_string()))
     ]
     .iter()

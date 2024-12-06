@@ -11,14 +11,13 @@ fn print_colored_ascii() {
   888  "Y88b   888          888888          "Y88b.    888     888 Y88b888 888        
   888    888   888                            "888    888     888  Y88888 888    888 
   888   d88P   888                      Y88b  d88P    888     888   Y8888 Y88b  d88P 
-  8888888P"    888                       "Y8888P"     888     888    Y888  "Y8888P"                                                                                                                                           
+  8888888P"    888                       "Y8888P"     888     888    Y888  "Y8888P"  "#;
 
-"#;
-
-    let global_start_color = (255, 0, 0);  // 红色
-    let global_end_color = (0, 0, 255);    // 蓝色
+    let global_start_color = (255, 0, 0);
+    let global_end_color = (0, 0, 255);
 
     for (line_index, line) in ascii_art.lines().enumerate() {
+        print!("        ");
         for (col_index, c) in line.chars().enumerate() {
             let row_factor = line_index as f32 / ascii_art.lines().count() as f32; 
             let col_factor = col_index as f32 / line.len() as f32;  
@@ -38,6 +37,7 @@ fn print_colored_ascii() {
         }
         println!();
     }
+    println!();
 }
 
 fn is_root() -> bool {

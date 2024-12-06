@@ -9,6 +9,13 @@ use anyhow::{Context, Ok, Result as AnyResult};
 use term_ansi::*;
 use rand::Rng;
 
+pub struct BtDeviceInfo {
+    mac: String,
+    ltk: String,
+    erand: String,
+    edev: String
+}
+
 pub fn fmt_mac(mac: &str) -> String {
     mac.as_bytes()
        .chunks(2)
@@ -17,7 +24,7 @@ pub fn fmt_mac(mac: &str) -> String {
        .join(":")
 }
 
-pub fn parse_reg(device: &str, mountpoint: &str) -> AnyResult<HashMap<String, (String, String)>> {
+pub fn parse_reg(device: &str, mountpoint: &str) -> AnyResult<HashMap<String, BtDeviceInfo>> {
     let path = format!("{}/Windows/System32/config/SYSTEM", mountpoint);
     if !std::path::Path::new(&path).exists() {
         return Ok(HashMap::new());
@@ -55,12 +62,35 @@ pub fn parse_reg(device: &str, mountpoint: &str) -> AnyResult<HashMap<String, (S
                 for key in subs.context("Failed to get subkeys")? {
                     let key = key.context("Failed to enumerate key")?;
 
+                    let mut ltk = String::new();
+                    let mut erand: u64 = 0;
+                    let mut edev: u32 = 0;
+
                     if let Some(val) = key.value("LTK") {
                         if let KeyValueData::Small(data) = val.context("Failed to get binary data")?.data()? {
-                            let ltk = data.iter().map(|b| format!("{:02X}", b)).collect::<String>();
-                            if let Some(bt_name) = bt_name_map.get(&key.name().context("Failed to get name")?.to_string()) {
-                                bt_device_info.insert(bt_name.clone(), (fmt_mac(&key.name().context("Failed to get name")?.to_string()), ltk));
-                            }
+                            ltk = data.iter().map(|b| format!("{:02X}", b)).collect::<String>();
+                        }
+                    }
+
+                    println!("00");
+                    if let Some(val) = key.value("ERand") {
+                        println!("11");
+                        erand = val?.qword_data().context(format!("Error getting ERand data"))?;
+                    }
+
+                    if let Some(val) = key.value("EDIV") {
+                        println!("22");
+                        edev = val?.dword_data().context(format!("Error getting EDIV data"))?;
+                    }
+
+                    if !ltk.is_empty() && erand != 0 && edev != 0 {
+                        if let Some(bt_name) = bt_name_map.get(&key.name().context("Failed to get name")?.to_string()) {
+                            bt_device_info.insert(bt_name.clone(), BtDeviceInfo {
+                                mac: fmt_mac(&key.name().context("Failed to get name")?.to_string()),
+                                ltk: ltk,
+                                erand: format!("{}", erand),
+                                edev: format!("{}", edev),
+                            });
                         }
                     }
                 }
@@ -71,16 +101,18 @@ pub fn parse_reg(device: &str, mountpoint: &str) -> AnyResult<HashMap<String, (S
     println!("{}", green!("=== Get Windows bluetooth info from {} ===", red!("{}", device)));
 
     println!("{} |      {} |      {}", blue!("{:<30}", "Device Name"), blue!("{:<24}", "Address"), blue!("{:<40} ", "Key"));
-    println!("{}", "-".repeat(88));
-    for (name, (mac, uuid)) in &bt_device_info {
-        println!("{:<30} |      {:<24} |      {:<40}", name, mac, uuid);
+    println!("{}", "-".repeat(102));
+    for (name, info) in &bt_device_info {
+        println!("{} |      {} |      {}", rgb!(0xf0, 0x00, 0x56, "{:<30}", name), rgb!(0x00, 0xe0, 0x79, "{:<24}", info.mac), rgb!(0x00, 0xe0, 0x79, "{:<40}", info.ltk));
+        println!("{}, {}", info.erand, info.edev);
+
     }
 
     Ok(bt_device_info)
 }
 
-fn find_and_mount_ntfs_partitions() -> AnyResult<HashMap<String, (String, String)>> {
-    let mut bt_device_info:HashMap<String, (String, String)> = HashMap::new();
+fn find_and_mount_ntfs_partitions() -> AnyResult<HashMap<String, BtDeviceInfo>> {
+    let mut bt_device_info:HashMap<String, BtDeviceInfo> = HashMap::new();
 
     let output = Command::new("lsblk")
         .args(["-o", "NAME,FSTYPE,MOUNTPOINT", "--pairs", "--noheadings"])
@@ -136,20 +168,35 @@ fn find_and_mount_ntfs_partitions() -> AnyResult<HashMap<String, (String, String
     Ok(bt_device_info)
 }
 
-pub fn update_ltk(c: &str, ltk: &str) -> String {
+pub fn update_bt_info(c: &str, info: &BtDeviceInfo) -> String {
     let mut in_ltk = false;
     let mut updated = String::new();
     for line in c.lines() {
+        if line.trim().starts_with("[") {
+            in_ltk = false;
+        }
         if line.trim() == "[LongTermKey]" {
             in_ltk = true;
         }
-        if in_ltk && line.starts_with("Key=") {
-            updated.push_str(&format!("Key={}\n", ltk));
-            in_ltk = false;
-        } else {
-            updated.push_str(line);
-            updated.push('\n');
+
+        if in_ltk  {
+            if line.starts_with("Key=") {
+                updated.push_str(&format!("Key={}\n", info.ltk));
+                continue;
+            } 
+            if line.starts_with("EDiv=") {
+                updated.push_str(&format!("EDiv={}\n", info.edev));
+                continue;
+            }
+            if line.starts_with("Rand=") {
+                updated.push_str(&format!("Rand={}\n", info.erand));
+                continue;
+            }
         }
+
+        updated.push_str(line);
+        updated.push('\n');
+        
     }
     updated
 }
@@ -180,7 +227,7 @@ fn restart_bluetooth_service() {
     }
 }
 
-pub fn process_bth_device(path: std::path::PathBuf, bt_device_info: &HashMap<String, (String, String)>) -> AnyResult<()> {
+pub fn process_bth_device(path: std::path::PathBuf, bt_device_info: &HashMap<String, BtDeviceInfo>) -> AnyResult<()> {
     let mut result_map = HashMap::new();
 
     for sub_entry in fs::read_dir(&path)? {
@@ -193,12 +240,12 @@ pub fn process_bth_device(path: std::path::PathBuf, bt_device_info: &HashMap<Str
                     let content = fs::read_to_string(&info_path)?;
                     if let Some(name) = Regex::new(r"(?m)^Name=(.*)$").unwrap().captures(&content).and_then(|caps| caps.get(1).map(|m| m.as_str().to_string())) {
                         let ltk_old = get_ltk(&content);
-                        if let Some((mac, ltk)) = bt_device_info.get(&name) {
-                            let new_content = update_ltk(&content, ltk);
+                        if let Some(info) = bt_device_info.get(&name) {
+                            let new_content = update_bt_info(&content, &info);
                             fs::write(format!("{}", info_path.to_str().unwrap()), &new_content)?;
-                            fs::rename(path, path.parent().unwrap().join(mac))?;
+                            fs::rename(path, path.parent().unwrap().join(info.mac.clone()))?;
         
-                            result_map.insert(name, (file_name.to_string(), mac, ltk_old, ltk.clone()));
+                            result_map.insert(name, (file_name.to_string(), info.mac.clone(), ltk_old, info.ltk.clone()));
                         }
                     }
                 }
@@ -214,11 +261,11 @@ pub fn process_bth_device(path: std::path::PathBuf, bt_device_info: &HashMap<Str
 
     println!("{}", green!("\n=== Update Linux bluetooth info ==="));
 
-    println!("{} |      {} | {}", blue!("{:<30}", "Device Name"), blue!("{:<24}", "Address"), blue!("{:<40} ", "Key"));
-    println!("{}", "-".repeat(88));
+    println!("{} |      {} |      {}", blue!("{:<30}", "Device Name"), blue!("{:<24}", "Address"), blue!("{:<40} ", "Key"));
+    println!("{}", "-".repeat(102));
     for (name, (old_mac, new_mac, old_ltk, new_ltk)) in &result_map {
-        println!("{} | FROM {} | FROM {}", cyan!("{:<30}", name), yellow!("{:<24}", old_mac), yellow!("{:<40}", old_ltk));
-        println!("{} |   TO {} |   TO {}", cyan!("{:<30}", ""), magenta!("{:<24}", new_mac), magenta!("{:<40}", new_ltk));
+        println!("{} | FROM {} | FROM {}", rgb!(0x80, 0x1d, 0xae, "{:<30}", name), rgb!(0xff, 0xa4, 0x00, "{:<24}", old_mac), rgb!(0xff, 0xa4, 0x00, "{:<40}", old_ltk));
+        println!("{} |   TO {} |   TO {}", rgb!(0x80, 0x1d, 0xae, "{:<30}", ""),   rgb!(0xaf, 0xdd, 0x22, "{:<24}", new_mac), rgb!(0xaf, 0xdd, 0x22, "{:<40}", new_ltk));
     }
 
     restart_bluetooth_service();
