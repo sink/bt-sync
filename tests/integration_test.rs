@@ -16,9 +16,14 @@ fn test_update_ltk() -> Result<()> {
 [LongTermKey]
 Key=00000000000000000000000000000000
 Name=test"#;
-    let ltk = "112233445566778899AABBCCDDEEFF";
-    let updated_content = update_bt_info(content, ltk);
-    assert!(updated_content.contains(&format!("Key={}", ltk)));
+    let info = BtDeviceInfo {
+        mac: "00:00:00:00:00:00".to_string(),
+        ltk: "112233445566778899AABBCCDDEEFF".to_string(),
+        edev: "12345".to_string(),
+        erand: "998877665544".to_string()
+    };
+    let updated_content = update_bt_info(content, &info);
+    assert!(updated_content.contains(&format!("Key={}", info.ltk)));
     Ok(())
 }
 
@@ -79,11 +84,16 @@ Version=1"#;
 
     println!("PP={}", info_path.to_string_lossy());
 
-    let mut bt_device_info: HashMap<String, (String, String)> = HashMap::new();
+    let mut bt_device_info: HashMap<String, BtDeviceInfo> = HashMap::new();
     let new_ltk = "DEADBEEF00000000DEADBEEF00000000";
     bt_device_info.insert(
         "Basilisk X HyperSpeed".to_string(),
-        ("00:11:22:33:44:55".to_string(), new_ltk.to_string()),
+        BtDeviceInfo {
+            mac: "00:11:22:33:44:55".to_string(),
+            ltk: new_ltk.to_string(),
+            edev: "12345".to_string(),
+            erand: "998877665544".to_string()
+        }
     );
 
     std::env::set_var("TESTING", "true");
@@ -95,7 +105,7 @@ Version=1"#;
     let info_path = new_dir.join("info");
     let content = fs::read_to_string(&info_path)?;
     let ltk = get_ltk(&content);
-    assert_eq!(ltk, new_ltk);
+    assert_eq!(new_ltk, ltk);
 
     Ok(())
 }
@@ -108,15 +118,32 @@ fn test_parse_reg() -> Result<()> {
 
     let result = parse_reg("/dev/test", path.to_str().unwrap())?;
     
-    let expected_map: HashMap<String, (String, String)> = [
-        ("BT+2.4G KB".to_string(),               ("E0:10:5F:A9:F6:59".to_string(), "039D9DE0952391208B4F755257E6425B".to_string())),
-        ("Basilisk X HyperSpeed".to_string(),    ("FC:51:CA:AC:57:11".to_string(), "D23FEDC5F5806AF8A37D41D81EE4DA5C".to_string())),
-        ("Xbox Wireless Controller".to_string(), ("AC:8E:BD:24:AC:52".to_string(), "84417A06F13444B2780E0CC3CF1D353D".to_string()))
+    let expected_map: HashMap<String, BtDeviceInfo> = [
+        ("BT+2.4G KB".to_string(), BtDeviceInfo {
+            mac: "E0:10:5F:A9:F6:59".to_string(),
+            ltk: "039D9DE0952391208B4F755257E6425B".to_string(),
+            edev: "28781".to_string(),
+            erand: "16975003643600944841".to_string()
+        }),
+
+        ("Basilisk X HyperSpeed".to_string(), BtDeviceInfo {
+            mac: "FC:51:CA:AC:57:11".to_string(),
+            ltk: "D23FEDC5F5806AF8A37D41D81EE4DA5C".to_string(),
+            edev: "34794".to_string(),
+            erand: "9659891662176722970".to_string()
+        }),
+        
+        ("Xbox Wireless Controller".to_string(), BtDeviceInfo {
+            mac: "AC:8E:BD:24:AC:52".to_string(),
+            ltk: "84417A06F13444B2780E0CC3CF1D353D".to_string(),
+            edev: "0".to_string(),
+            erand: "0".to_string()
+        })
     ]
     .iter()
     .cloned()
     .collect();
-    assert_eq!(result, expected_map);
+    assert_eq!(expected_map, result);
 
     Ok(())
 }

@@ -9,11 +9,12 @@ use anyhow::{Context, Ok, Result as AnyResult};
 use term_ansi::*;
 use rand::Rng;
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct BtDeviceInfo {
-    mac: String,
-    ltk: String,
-    erand: String,
-    edev: String
+    pub mac: String,
+    pub ltk: String,
+    pub erand: String,
+    pub edev: String
 }
 
 pub fn fmt_mac(mac: &str) -> String {
@@ -72,18 +73,15 @@ pub fn parse_reg(device: &str, mountpoint: &str) -> AnyResult<HashMap<String, Bt
                         }
                     }
 
-                    println!("00");
                     if let Some(val) = key.value("ERand") {
-                        println!("11");
                         erand = val?.qword_data().context(format!("Error getting ERand data"))?;
                     }
 
                     if let Some(val) = key.value("EDIV") {
-                        println!("22");
                         edev = val?.dword_data().context(format!("Error getting EDIV data"))?;
                     }
 
-                    if !ltk.is_empty() && erand != 0 && edev != 0 {
+                    if !ltk.is_empty() {
                         if let Some(bt_name) = bt_name_map.get(&key.name().context("Failed to get name")?.to_string()) {
                             bt_device_info.insert(bt_name.clone(), BtDeviceInfo {
                                 mac: fmt_mac(&key.name().context("Failed to get name")?.to_string()),
@@ -104,7 +102,6 @@ pub fn parse_reg(device: &str, mountpoint: &str) -> AnyResult<HashMap<String, Bt
     println!("{}", "-".repeat(102));
     for (name, info) in &bt_device_info {
         println!("{} |      {} |      {}", rgb!(0xf0, 0x00, 0x56, "{:<30}", name), rgb!(0x00, 0xe0, 0x79, "{:<24}", info.mac), rgb!(0x00, 0xe0, 0x79, "{:<40}", info.ltk));
-        println!("{}, {}", info.erand, info.edev);
 
     }
 
