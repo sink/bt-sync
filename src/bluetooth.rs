@@ -12,7 +12,7 @@ pub struct BtDeviceInfo {
     pub mac: String,
     pub ltk: String,
     pub erand: String,
-    pub edev: String
+    pub ediv: String
 }
 
 pub fn get_ltk(c: &str) -> String {
@@ -49,7 +49,7 @@ pub fn update_bt_info(c: &str, info: &BtDeviceInfo) -> String {
         if in_ltk {
             match line.splitn(2, '=').next() {
                 Some("Key") => { updated.push_str(&format!("Key={}\n", info.ltk)); continue; }
-                Some("EDiv") => { updated.push_str(&format!("EDiv={}\n", info.edev)); continue; }
+                Some("EDiv") => { updated.push_str(&format!("EDiv={}\n", info.ediv)); continue; }
                 Some("Rand") => { updated.push_str(&format!("Rand={}\n", info.erand)); continue; }
                 _ => {}
             }

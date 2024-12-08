@@ -21,7 +21,7 @@ Name=test"#;
     let info = BtDeviceInfo {
         mac: "00:00:00:00:00:00".to_string(),
         ltk: "112233445566778899AABBCCDDEEFF".to_string(),
-        edev: "12345".to_string(),
+        ediv: "12345".to_string(),
         erand: "998877665544".to_string()
     };
     let updated_content = update_bt_info(content, &info);
@@ -93,7 +93,7 @@ Version=1"#;
         BtDeviceInfo {
             mac: "00:11:22:33:44:55".to_string(),
             ltk: new_ltk.to_string(),
-            edev: "12345".to_string(),
+            ediv: "12345".to_string(),
             erand: "998877665544".to_string()
         }
     );
@@ -124,21 +124,21 @@ fn test_parse_reg() -> Result<()> {
         ("BT+2.4G KB".to_string(), BtDeviceInfo {
             mac: "E0:10:5F:A9:F6:59".to_string(),
             ltk: "039D9DE0952391208B4F755257E6425B".to_string(),
-            edev: "28781".to_string(),
+            ediv: "28781".to_string(),
             erand: "16975003643600944841".to_string()
         }),
 
         ("Basilisk X HyperSpeed".to_string(), BtDeviceInfo {
             mac: "FC:51:CA:AC:57:11".to_string(),
             ltk: "D23FEDC5F5806AF8A37D41D81EE4DA5C".to_string(),
-            edev: "34794".to_string(),
+            ediv: "34794".to_string(),
             erand: "9659891662176722970".to_string()
         }),
         
         ("Xbox Wireless Controller".to_string(), BtDeviceInfo {
             mac: "AC:8E:BD:24:AC:52".to_string(),
             ltk: "84417A06F13444B2780E0CC3CF1D353D".to_string(),
-            edev: "0".to_string(),
+            ediv: "0".to_string(),
             erand: "0".to_string()
         })
     ]
