@@ -1,3 +1,4 @@
+use bluetooth::process_bluetooth_devices;
 use bt_sync::*;
 use std::process;
 use term_ansi::*;

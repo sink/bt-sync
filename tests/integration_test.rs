@@ -1,4 +1,6 @@
+use bluetooth::*;
 use bt_sync::*;
+use hive::parse_reg;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
