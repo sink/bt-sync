@@ -4,13 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-notatin = "1.0.1"
 regex = "1"
 nt-hive = "0.2.0"
 zerocopy = "0.6" 
 mockall = "0.8" 
 anyhow = "1.0"
-tempfile = "3.14.0"
 term_ansi = "0.2.5"
 rand = "0.8.5"
-colored = "2.1.0"

@@ -1,6 +1,6 @@
-use bluetooth::process_bluetooth_devices;
 use bt_sync::*;
-use utils::{is_root, print_colored_ascii, restart_with_sudo};
+use bluetooth::*;
+use utils::*;
 use std::process;
 
 fn main() {

@@ -89,7 +89,10 @@ pub fn parse_reg(device: &str, mountpoint: &str) -> Result<HashMap<String, BtDev
     println!("{} |      {} |      {}", blue!("{:<30}", "Device Name"), blue!("{:<24}", "Address"), blue!("{:<40} ", "Key"));
     println!("{}", "-".repeat(102));
     for (name, info) in &bt_device_info {
-        println!("{} |      {} |      {}", rgb!(0xf0, 0x00, 0x56, "{:<30}", name), rgb!(0x00, 0xe0, 0x79, "{:<24}", info.mac), rgb!(0x00, 0xe0, 0x79, "{:<40}", info.ltk));
+        println!("{} |      {} |      {}", 
+            rgb!(0xf0, 0x00, 0x56, "{:<30}", name), 
+            rgb!(0xaa, 0x96, 0xda, "{:<24}", info.mac), 
+            rgb!(0xaa, 0x96, 0xda, "{:<40}", info.ltk));
     }
 
     Ok(bt_device_info)

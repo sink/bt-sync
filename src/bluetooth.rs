@@ -1,7 +1,6 @@
 use std::{collections::HashMap, fs, path::{Path, PathBuf}, process::Command};
 
 use anyhow::Result;
-use colored::*;
 use regex::Regex;
 use term_ansi::*;
 
@@ -152,23 +151,23 @@ fn update_device_info(
 }
 
 fn print_update_results(result_map: &HashMap<String, (String, String, String, String)>) {
-    println!("{}", "\n=== Update Linux bluetooth info ===".green());
+    println!("{}", green!("\n=== Update Linux bluetooth info ==="));
 
     println!("{} |      {} |      {}", 
-             format!("{:<30}", "Device Name".green()),
-             format!("{:<24}", "Address".blue()),
-             format!("{:<40}", "Key".blue()));
+        blue!("{:<30}", "Device Name"),
+        blue!("{:<24}", "Address"),
+        blue!("{:<40}", "Key"));
     println!("{}", "-".repeat(102));
     
     for (name, (old_mac, new_mac, old_ltk, new_ltk)) in result_map {
-        let name_colored = format!("{:<30}", name.green());
-        let old_mac_colored = format!("{:<24}", old_mac.yellow());
-        let old_ltk_colored = format!("{:<40}", old_ltk.yellow());
+        let name_colored = rgb!(0xf0, 0x00, 0x56, "{:<30}", name);
+        let old_mac_colored = rgb!(0xaa, 0x96, 0xda, "{:<24}", old_mac);
+        let old_ltk_colored = rgb!(0xaa, 0x96, 0xda, "{:<40}", old_ltk);
         println!("{} | FROM {} | FROM {}", name_colored, old_mac_colored, old_ltk_colored);
 
-        let space_colored = format!("{:<30}", " ".green());
-        let new_mac_colored = format!("{:<24}", new_mac.bright_green());
-        let new_ltk_colored = format!("{:<40}", new_ltk.bright_green());
+        let space_colored = rgb!(0xf0, 0x00, 0x56, "{:<30}", " ");
+        let new_mac_colored = rgb!(0x00, 0xe0, 0x79, "{:<24}", new_mac);
+        let new_ltk_colored = rgb!(0x00, 0xe0, 0x79, "{:<40}", new_ltk);
         println!("{} |   TO {} |   TO {}", space_colored, new_mac_colored, new_ltk_colored);
     }
 }
